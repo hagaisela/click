@@ -26,6 +26,8 @@
 #include <click/straccum.hh>
 #include <click/router.hh>
 #include "iproutetable.hh"
+#include <algorithm>
+
 CLICK_DECLS
 
 bool
@@ -100,22 +102,76 @@ IPRouteTable::configure(Vector<String> &conf, ErrorHandler *errh)
 {
     int r = 0, r1, eexist = 0;
     IPRoute route;
-    for (int i = 0; i < conf.size(); i++) {
-	if (!cp_ip_route(conf[i], &route, false, this)) {
-	    errh->error("argument %d should be %<ADDR/MASK [GATEWAY] OUTPUT%>", i+1);
-	    r = -EINVAL;
-	} else if (route.port < 0 || route.port >= noutputs()) {
-	    errh->error("argument %d bad OUTPUT", i+1);
-	    r = -EINVAL;
-	} else if ((r1 = add_route(route, false, 0, errh)) < 0) {
-	    if (r1 == -EEXIST)
-		++eexist;
-	    else
-		r = r1;
-	}
+    //@@@ hagai debug
+    // for (int i = 0; i < conf.size(); i++) {
+	// if (!cp_ip_route(conf[i], &route, false, this)) {
+	//     errh->error("argument %d should be %<ADDR/MASK [GATEWAY] OUTPUT%>", i+1);
+	//     r = -EINVAL;
+	// } else if (route.port < 0 || route.port >= noutputs()) {
+	//     errh->error("argument %d bad OUTPUT", i+1);
+	//     r = -EINVAL;
+	// } else if ((r1 = add_route(route, false, 0, errh)) < 0) {
+	//     if (r1 == -EEXIST)
+	// 	++eexist;
+	//     else
+	// 	r = r1;
+	// }
+    // }
+    Vector<IPRoute> routes;
+    routes.reserve(conf.size());
+    for (int i=0; i<conf.size(); ++i)
+    {
+        if (!cp_ip_route(conf[i], &route, false, this)) 
+        {
+            errh->error("argument %d should be %<ADDR/MASK [GATEWAY] OUTPUT%>", i+1);
+            return -EINVAL;
+        }
+
+        routes.push_back(route);
     }
+
+    std::random_shuffle(routes.begin(), routes.end());
+    Timestamp t_start = Timestamp::now();
+    for (IPRoute cur_route: routes)
+    {
+        r1 = add_route(cur_route, false, 0, errh);
+        if (r1 == -EEXIST)
+        {
+            ++eexist;
+        }
+        else if (r1 < 0)
+        {
+            return r1;
+        }
+    }
+    StringAccum sa;
+    Timestamp t_len = Timestamp::now() - t_start;
+    
+    int time_ms = t_len.sec() * 1000 + t_len.usec() / 1000;
+    int killo_per_second = routes.size() / time_ms;
+    sa << routes.size() << " inserts in " << t_len << " seconds. ";
+    sa << killo_per_second / 1000 << "." << (killo_per_second % 1000) / 100 << " M inserts/s)\n";
+    errh->warning(sa.take_string().c_str());
+
     if (eexist)
 	errh->warning("%d %s replaced by later versions", eexist, eexist > 1 ? "routes" : "route");
+
+    // std::random_shuffle(routes.begin(), routes.end());
+    // IPRoute old_route;
+    // t_start = Timestamp::now();
+    // for (IPRoute cur_route: routes)
+    // {
+    //     remove_route(cur_route, &old_route, errh);
+    // }
+
+    // t_len = Timestamp::now() - t_start;
+    // time_ms = t_len.sec() * 1000 + t_len.usec() / 1000;
+    // killo_per_second = routes.size() / time_ms;
+    // StringAccum sa2;
+    // sa2 << routes.size() << " removes in " << t_len << " seconds. ";
+    // sa2 << killo_per_second / 1000 << "." << (killo_per_second % 1000) / 100 << " M removes/s)\n";
+    // errh->warning(sa2.take_string().c_str());
+
     return r;
 }
 
